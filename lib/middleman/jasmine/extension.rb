@@ -1,5 +1,4 @@
 require 'middleman-core'
-require 'middleman/jasmine/jasmine_sprockets_proxy'
 
 module Middleman
   module Jasmine
@@ -11,37 +10,71 @@ module Middleman
 
         yield options if block_given?
 
-        app.map(options.jasmine_url) { run ::JasmineSprocketsProxy.new }
-        jasmine_asset_folders(options.fixtures_dir).each do |item|
-          app.map("/#{item}") { run ::JasmineSprocketsProxy.new(item) }
-        end
+        jasmine_app = init_jasmine_app(options)
+        sprockets_app = init_sprockets_app || jasmine_app
 
-        app.after_configuration do
-          ::JasmineSprocketsProxy.configure(sprockets)
-        end
+        app.map(::Jasmine.config.spec_path) { run sprockets_app }
+        app.map(options.jasmine_url) { run jasmine_app }
       end
 
       private
 
-      def jasmine_asset_folders(fixtures_dir)
-        [
-          "__jasmine__", "__boot__", "__spec__", fixtures_dir
-        ]
+      PATH_METHOD_NAMES = [:jasmine_path, :spec_path, :boot_path]
+
+      def init_jasmine_app(options = {})
+        ::Jasmine.initialize_config
+        PATH_METHOD_NAMES.each do |get_method_name|
+          path = options.jasmine_url + ::Jasmine.config.send(get_method_name)
+          set_method_name = "#{get_method_name}=".to_sym
+          ::Jasmine.config.send(set_method_name, path)
+        end
+
+        ::Jasmine.load_configuration_from_yaml(options.jasmine_config_path)
+
+        config = ::Jasmine.config.clone
+        config.add_rack_path(config.src_path, lambda {
+          Rack::Jasmine::Runner.new(::Jasmine::Page.new(config))
+        })
+
+        ::Jasmine::Application.app(config).clone
+      end
+
+      def init_sprockets_app
+        if defined?(::Sprockets::Environment)
+          new_sprockets_app = ::Sprockets::Environment.new
+          new_sprockets_app.append_path(::Jasmine.config.spec_dir)
+          new_sprockets_app
+        end
       end
 
       def default_options
         {
           jasmine_url: "/jasmine",
+          jasmine_config_path: nil, # use Jasmine default
           fixtures_dir: "spec/javascripts/fixtures"
         }        
-      end      
-    alias :included :registered
+      end
+
+      alias :included :registered
     end
 
     module InstanceMethods
-      def jasmine_sprockets
-        ::JasmineSprocketsProxy.sprockets_app
-      end
+    end
+  end
+end
+
+# monkey patch Rack::Jasmine::Runner to allow for paths other than /
+module Rack
+  module Jasmine
+    class Runner
+      def call(env)
+        @path = env["PATH_INFO"]
+        [
+          200,
+          { 'Content-Type' => 'text/html'},
+          [@page.render]
+        ]
+      end      
     end
   end
 end
