@@ -1,5 +1,11 @@
 require 'middleman-core'
 
+module Jasmine
+  class Configuration
+    attr_reader :src_files
+  end
+end
+
 module Middleman
   module Jasmine
     class << self
@@ -35,6 +41,10 @@ module Middleman
         config.add_rack_path(config.src_path, lambda {
           Rack::Jasmine::Runner.new(::Jasmine::Page.new(config))
         })
+        src_files = config.src_files.call.map do |path|
+          path.sub(/(\.js)?\.coffee\Z/, '.js')
+        end
+        config.src_files = lambda { src_files }
 
         ::Jasmine::Application.app(config).clone
       end
